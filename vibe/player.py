@@ -7,10 +7,18 @@ get_now_playing()     — current track + queue position + time remaining
 """
 
 import asyncio
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from vibe import webplayer
+
+_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _log(msg: str) -> None:
+    print(f"[player] {msg}", file=sys.stderr, flush=True)
 
 # ---------------------------------------------------------------------------
 # State
@@ -47,8 +55,47 @@ def _play_index(index: int) -> dict:
     }
 
 
+async def _refresh_queue() -> bool:
+    """Re-run context detection, pick new artists, search, reload queue."""
+    try:
+        from vibe.context import get_coding_context as _get_ctx, _pick_artists
+        from vibe.music import _search_async
+
+        loop = asyncio.get_event_loop()
+        _log("refreshing queue: getting coding context")
+        ctx = await asyncio.wait_for(
+            loop.run_in_executor(_executor, _get_ctx),
+            timeout=8.0,
+        )
+        artists = _pick_artists(ctx)
+        _log(f"refreshing queue: picked artists {artists}")
+
+        tracks = []
+        for artist in artists:
+            results = await _search_async(artist)
+            tracks.extend(results[:4])
+
+        if not tracks:
+            _log("refreshing queue: no tracks found, keeping current queue")
+            return False
+
+        import random
+        random.shuffle(tracks)
+
+        global _queue, _queue_index, _started_at
+        _queue = tracks
+        _queue_index = 0
+        _started_at = None
+        _log(f"refreshing queue: loaded {len(tracks)} new tracks")
+        _play_index(0)
+        return True
+    except Exception as e:
+        _log(f"refreshing queue: error {e!r}")
+        return False
+
+
 async def _advance_loop():
-    """Open next tab before current song ends, cycling through the queue."""
+    """Advance to next track before current song ends. Refreshes queue when done."""
     while True:
         await asyncio.sleep(3)
         if _started_at is None or not _queue:
@@ -59,8 +106,13 @@ async def _advance_loop():
             continue
         remaining = duration - (time.time() - _started_at)
         if remaining <= _ADVANCE_BEFORE_END:
-            next_index = (_queue_index + 1) % len(_queue)
-            _play_index(next_index)
+            next_index = _queue_index + 1
+            if next_index < len(_queue):
+                _play_index(next_index)
+            else:
+                # Queue exhausted — do a fresh vibe check and reload
+                _log("queue ended, doing vibe check refresh")
+                await _refresh_queue()
 
 
 # ---------------------------------------------------------------------------

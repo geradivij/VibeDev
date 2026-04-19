@@ -96,81 +96,8 @@ _POOL: dict[str, list[str]] = {
 
 _recent_artists: list[str] = []
 
-_GENRES: dict[str, list[str]] = {
-    "late_night": [
-        "ghazal", "qawwali", "sufi", "sad bollywood", "pakistani classical",
-        "acoustic indie", "coke studio", "semi-classical",
-    ],
-    "intense": [
-        "desi hip hop", "underground rap", "punjabi trap", "indian hip hop",
-        "pakistani hip hop", "drill", "hard bollywood", "indian electronic",
-    ],
-    "deep_grind": [
-        "punjabi hip hop", "sufi rock", "coke studio", "dark bollywood",
-        "pakistani rock", "cinematic instrumental", "qawwali fusion",
-    ],
-    "energized": [
-        "punjabi pop", "bhangra", "bollywood dance", "desi party",
-        "indian electronic", "tamil mass", "telugu mass", "filmi pop",
-    ],
-    "focus": [
-        "indian film score", "bollywood instrumental", "hindustani instrumental",
-        "carnatic fusion", "classical fusion", "lo-fi bollywood",
-        "soft indie", "ambient desi",
-    ],
-    "chill": [
-        "indian indie", "pakistani indie", "acoustic pop", "mellow bollywood",
-        "desi r&b", "old bollywood", "folk fusion", "soft rock",
-    ],
-}
 
-_EXTRA_POOL: dict[str, list[str]] = {
-    "late_night": [
-        "Hariharan", "Chitra Singh", "Iqbal Bano", "Runa Laila",
-        "Wadali Brothers", "Fareed Ayaz", "Sanam Marvi", "Nooran Sisters",
-        "Sonu Nigam", "Shaan", "Shreya Ghoshal", "Ali Sethi", "Arooj Aftab",
-    ],
-    "intense": [
-        "Rawal", "Bharg", "Yashraj", "Raga", "Frappe Ash", "Ahmer",
-        "Tsumyoki", "Sikander Kahlon", "Bella", "Gravity", "Faris Shafi",
-        "Rap Demon", "JJ47", "Shareh", "Badshah", "Karan Aujla", "Shubh",
-        "Sidhu Moosewala",
-    ],
-    "deep_grind": [
-        "AP Dhillon", "Gurinder Gill", "Prem Dhillon", "Navaan Sandhu",
-        "NseeB", "The PropheC", "Jaz Dhami", "Amrinder Gill", "Bayaan",
-        "Kashmir", "Mekaal Hasan Band", "Rahat Fateh Ali Khan",
-        "A.R. Rahman", "Amit Trivedi", "Vishal Bhardwaj",
-    ],
-    "energized": [
-        "Devi Sri Prasad", "Thaman S", "Vijay Antony", "Yuvan Shankar Raja",
-        "Daler Mehndi", "Sukhbir", "Mika Singh", "Hardy Sandhu",
-        "Aastha Gill", "Neha Kakkar", "Kanika Kapoor", "Tanishk Bagchi",
-        "Asees Kaur", "Amit Trivedi", "Vishal-Shekhar", "Pritam",
-        "Ajay-Atul",
-    ],
-    "focus": [
-        "Vishal Bhardwaj", "Ajay-Atul", "Sneha Khanwalkar", "Clinton Cerejo",
-        "Ram Sampath", "Amaal Mallik", "Anupam Roy", "Santhosh Narayanan",
-        "D. Imman", "Govind Vasantha", "Bismillah Khan", "Niladri Kumar",
-        "Anoushka Shankar", "Rakesh Chaurasia", "Rahul Sharma",
-        "Nitin Sawhney", "Karsh Kale",
-    ],
-    "chill": [
-        "Lifafa", "Osho Jain", "Taba Chake", "Parekh & Singh", "Mali",
-        "Samar Mehdi", "Dream Note", "The Yellow Diary", "Ankur Tewari",
-        "Nikhil D'Souza", "Raghav Meattle", "Tejas", "Sanjeev Thomas",
-        "Abdul Hannan", "Maanu", "Shamoon Ismail", "Sajjad Ali",
-        "Asha Bhosle", "Mukesh", "Geeta Dutt",
-    ],
-}
-
-for _category, _artists in _EXTRA_POOL.items():
-    existing = _POOL.setdefault(_category, [])
-    existing.extend(a for a in _artists if a not in existing)
-
-
-def _pick_artist(context: dict) -> str:
+def _pick_artists(context: dict, n: int = 3) -> list[str]:
     hour = context.get("hour_of_day", 12)
     language = context.get("language", "unknown")
     filename = (context.get("filename") or "").lower()
@@ -194,80 +121,18 @@ def _pick_artist(context: dict) -> str:
         category = "chill"
 
     pool = _POOL[category]
-    available = [a for a in pool if a not in _recent_artists[-3:]]
-    if not available:
+    available = [a for a in pool if a not in _recent_artists[-4:]]
+    if len(available) < n:
         available = pool
 
-    artist = random.choice(available)
-    _recent_artists.append(artist)
-    if len(_recent_artists) > 8:
-        _recent_artists.pop(0)
+    picks = random.sample(available, min(n, len(available)))
+    _recent_artists.extend(picks)
+    if len(_recent_artists) > 12:
+        _recent_artists[:] = _recent_artists[-12:]
 
-    _log(f"_pick_artist: category={category}, picked={artist!r}")
-    return artist
+    _log(f"_pick_artists: category={category}, picked={picks}")
+    return picks
 
-
-def _category_for_context(context: dict) -> str:
-    hour = context.get("hour_of_day", 12)
-    language = context.get("language", "unknown")
-    filename = (context.get("filename") or "").lower()
-    symbols_str = " ".join(context.get("symbols") or []).lower()
-
-    if hour < 10 or hour >= 22:
-        return "late_night"
-    if any(w in symbols_str for w in ["train", "model", "loss", "fit", "predict", "epoch"]):
-        return "deep_grind"
-    if any(w in filename for w in ["test", "spec"]) or "assert" in symbols_str:
-        return "intense"
-    if language in ("rust", "go"):
-        return "intense"
-    if any(w in filename for w in ["index", "app", "main", "server"]):
-        return "energized"
-    if language in ("markdown", "yaml", "toml") or "readme" in filename:
-        return "chill"
-    if language in ("python", "typescript", "javascript"):
-        return "focus"
-    return "chill"
-
-
-def _pick_palette(context: dict, count: int = 12) -> dict:
-    category = _category_for_context(context)
-    pool = _POOL[category]
-    available = [a for a in pool if a not in _recent_artists[-8:]]
-    if not available:
-        available = pool
-
-    candidate_artists = random.sample(available, min(count, len(available)))
-    _recent_artists.extend(candidate_artists[:4])
-    del _recent_artists[:-16]
-
-    genres = random.sample(_GENRES[category], min(4, len(_GENRES[category])))
-    _log(
-        f"_pick_palette: category={category}, genres={genres!r}, "
-        f"artists={candidate_artists!r}"
-    )
-    return {
-        "vibe_category": category,
-        "genres": genres,
-        "candidate_artists": candidate_artists,
-        "suggested_query": candidate_artists[0],
-        "avoid_recent_artists": _recent_artists[-8:],
-    }
-
-
-def _next_action(palette: dict) -> str:
-    artists = ", ".join(repr(a) for a in palette["candidate_artists"])
-    genres = ", ".join(repr(g) for g in palette["genres"])
-    return (
-        "Build a varied queue from the candidate artists and genres. "
-        f"Candidate artists: [{artists}]. Genres: [{genres}]. "
-        "Pick 4-6 different artists from candidate_artists. "
-        "Call search_tracks separately for each selected artist, using "
-        "fallback_query='AP Dhillon'. Combine 1-2 tracks per artist into one "
-        "interleaved tracks list, then call queue_tracks with that mixed list. "
-        "Do not search only one artist. Do not queue more than 2 tracks by the "
-        "same artist."
-    )
 
 # Extensions → language name
 _EXT_MAP = {
@@ -539,11 +404,12 @@ def get_coding_context(watch_dir: str | None = None) -> dict:
             "active_project": None,
             "editor_sources": [s for s, _ in candidate_dirs],
         }
-        artist = _pick_artist(partial)
-        partial["suggested_query"] = artist
+        artists = _pick_artists(partial)
+        partial["suggested_queries"] = artists
         partial["next_action"] = (
-            f"Call search_tracks(query={artist!r}, fallback_query='AP Dhillon'). "
-            f"Use this query exactly — do not substitute a different artist."
+            f"Call search_tracks once for each query in suggested_queries {artists}. "
+            f"Take up to 4 tracks from each result. Combine all tracks into one list and call queue_tracks. "
+            f"Do not substitute different artists."
         )
         return partial
 
@@ -559,10 +425,11 @@ def get_coding_context(watch_dir: str | None = None) -> dict:
         "active_project": active_file.parent.name,
         "editor_sources": [source_used],
     }
-    artist = _pick_artist(result)
-    result["suggested_query"] = artist
+    artists = _pick_artists(result)
+    result["suggested_queries"] = artists
     result["next_action"] = (
-        f"Call search_tracks(query={artist!r}, fallback_query='AP Dhillon'). "
-        f"Use this query exactly — do not substitute a different artist."
+        f"Call search_tracks once for each query in suggested_queries {artists}. "
+        f"Take up to 4 tracks from each result. Combine all tracks into one list and call queue_tracks. "
+        f"Do not substitute different artists."
     )
     return result
