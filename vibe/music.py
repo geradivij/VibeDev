@@ -6,11 +6,16 @@ Claude picks the query based on coding context. No vibe dict, no sampling.
 
 import asyncio
 import os
+import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-import httpx
 import yt_dlp
+
+
+def _log(msg: str) -> None:
+    print(f"[music] {msg}", file=sys.stderr, flush=True)
 
 _LASTFM_BASE = "https://ws.audioscrobbler.com/2.0/"
 _SEARCH_RESULTS = 10
@@ -36,16 +41,19 @@ def _search_sync(query: str, max_results: int = _SEARCH_RESULTS) -> list[dict]:
         "extract_flat": True,
         "skip_download": True,
     }
+    _log(f"_search_sync: query={query!r}")
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
             entries = info.get("entries", []) if info else []
+        _log(f"_search_sync: got {len(entries)} entries before duration filter")
         tracks = []
         for entry in entries:
             if not entry:
                 continue
             duration = entry.get("duration") or 0
             if not (_MIN_DURATION <= duration <= _MAX_DURATION):
+                _log(f"  filtered out: {entry.get('title','?')} duration={duration}")
                 continue
             video_id = entry.get("id")
             if not video_id:
@@ -56,8 +64,10 @@ def _search_sync(query: str, max_results: int = _SEARCH_RESULTS) -> list[dict]:
                 "duration_seconds": int(duration),
                 "url": f"https://music.youtube.com/watch?v={video_id}",
             })
+        _log(f"_search_sync: returning {len(tracks)} tracks")
         return tracks
     except Exception:
+        _log(f"_search_sync: EXCEPTION:\n{traceback.format_exc()}")
         return []
 
 

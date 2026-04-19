@@ -1,12 +1,76 @@
 # VibeDev MCP
 
-> Ambient music that matches what you're building.
+Ambient Indian/desi music for whatever you are coding.
 
-An MCP server that reads your active coding context and autonomously opens a matching Spotify playlist. Claude does the vibe reasoning — no hardcoded rules. No Spotify Premium required.
+VibeDev is a local MCP server for Claude Desktop. It reads coding context from your machine, chooses a matching artist/search query, finds real tracks with `yt-dlp`, and queues them in a dedicated browser app window pointed at YouTube Music.
 
-**Music palette:** Hindi lo-fi · Punjabi trap/beats · Bollywood instrumentals → English hip-hop → English ambient/lo-fi
+The current implementation is YouTube Music based. It does not use Spotify.
 
----
+## Current Flow
+
+```text
+Claude Desktop
+  -> get_coding_context()
+  -> follow next_action exactly
+  -> search_tracks(query=suggested_query, fallback_query="AP Dhillon")
+  -> queue_tracks(tracks)
+  -> YouTube Music opens in a dedicated Edge/Chrome app window
+```
+
+`get_coding_context()` returns both `suggested_query` and `next_action`. The server instructions tell Claude to start with context detection and then follow `next_action` exactly, so the model does not replace the selected artist with its own choice.
+
+## Music Palette
+
+VibeDev is desi-first.
+
+Primary artists include Punjabi, Hindi, Pakistani, ghazal, sufi, indie, film-score, classical, and desi rap artists. Examples include AP Dhillon, Shubh, Karan Aujla, Sidhu Moosewala, DIVINE, Seedhe Maut, Talha Anjum, Diljit Dosanjh, Badshah, Arijit Singh, Talwiinder, A.R. Rahman, Nusrat Fateh Ali Khan, Jagjit Singh, Abida Parveen, Coke Studio Pakistan, Prateek Kuhad, The Local Train, Ravi Shankar, and Zakir Hussain.
+
+The context picker maps coding context to rough categories:
+
+| Context signal | Category | Example artists |
+|---|---|---|
+| Late night | `late_night` | Jagjit Singh, Ghulam Ali, Mehdi Hassan, Nusrat Fateh Ali Khan, Abida Parveen, Arijit Singh |
+| Tests, debugging, Rust, Go | `intense` | Seedhe Maut, Prabh Deep, Kr$na, Emiway Bantai, Young Stunners, DIVINE, Raftaar |
+| ML/training/model work | `deep_grind` | Karan Aujla, Sidhu Moosewala, Shubh, Bohemia, Coke Studio Pakistan, Junoon |
+| App/server/main files | `energized` | Diljit Dosanjh, Badshah, Yo Yo Honey Singh, Nucleya, Ritviz, Shankar Ehsaan Loy |
+| Python/TypeScript/JavaScript flow | `focus` | A.R. Rahman, Amit Trivedi, Ilaiyaraaja, Pritam, Ravi Shankar, Zakir Hussain |
+| Docs/config/chill work | `chill` | AP Dhillon, Talwiinder, Prateek Kuhad, The Local Train, Ali Sethi, Lucky Ali |
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `get_coding_context(watch_dir="")` | Finds the most recently modified source file and returns language, filename, symbols, hour, active project, editor source, `suggested_query`, and `next_action`. |
+| `search_tracks(query, fallback_query="lo-fi hip hop focus")` | Uses `yt-dlp` YouTube search, filters to 1-8 minute tracks, and returns YouTube Music URLs. |
+| `queue_tracks(tracks)` | Loads a track list, opens the first song, and starts a background auto-advance loop. |
+| `skip_track()` | Moves to the next track in the queue. |
+| `get_now_playing()` | Reports current track, elapsed time, remaining time, and queue position. |
+
+## Context Detection
+
+VibeDev tries to infer what project you are actively working in. It checks these sources in order:
+
+1. An explicit `watch_dir` argument, if provided.
+2. VS Code's last active window from `%APPDATA%\Code\User\globalStorage\storage.json`.
+3. Recent absolute `cd` commands from PowerShell history.
+4. `WATCH_DIR` from `.env`.
+5. Your home directory as a final fallback.
+
+The scan is intentionally shallow and time-limited so Claude Desktop does not hang while waiting for context.
+
+## Playback
+
+Playback is handled by `vibe/webplayer.py`.
+
+The player looks for Edge or Chrome, then launches YouTube Music with:
+
+- `--app=<youtube_music_url>`
+- a dedicated browser profile at `~/.vibedev/edge-profile`
+- `--autoplay-policy=no-user-gesture-required`
+
+The dedicated profile matters. On first run, you may need to sign into YouTube Music inside the VibeDev app window once. That login should persist for later runs.
+
+Each track change terminates the previous app-window process and opens the next track in a fresh app window using the same profile.
 
 ## Quick Start
 
@@ -16,74 +80,78 @@ An MCP server that reads your active coding context and autonomously opens a mat
 pip install -r requirements.txt
 ```
 
-### 2. Get API keys
+### 2. Configure environment
 
-- **Last.fm** (free): https://www.last.fm/api/account/create
-- **Spotify app** (free): https://developer.spotify.com/dashboard
-  - Set redirect URI to `http://localhost:8888/callback` in your app settings
-  - Enable "Web API" scope in the dashboard
-  - You need both **Client ID** and **Client Secret** for playlist search
+Create `.env` in the project root:
 
-### 3. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env and fill in your keys
+```env
+WATCH_DIR=C:\Users\gerad\Projects
 ```
 
-### 4. Add to Claude Desktop
+`WATCH_DIR` is recommended, but the server can also use VS Code and PowerShell history to find the active project.
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+Spotify credentials are not needed. Last.fm is not used by the current flow.
+
+### 3. Add to Claude Desktop
+
+On Windows, edit:
+
+```text
+%APPDATA%\Claude\claude_desktop_config.json
+```
+
+Use an absolute path to this repo's `server.py`:
 
 ```json
 {
   "mcpServers": {
     "vibedev": {
       "command": "python",
-      "args": ["/absolute/path/to/vibedev-mcp/server.py"]
+      "args": ["C:\\Users\\gerad\\Projects\\VibeDev\\server.py"]
     }
   }
 }
 ```
 
-Restart Claude Desktop.
+Restart Claude Desktop after editing the config.
 
----
+### 4. Ask Claude to play music
 
-## The 5 Tools
+Example:
 
-| Tool | What it does |
-|---|---|
-| `get_coding_context()` | Scans filesystem for most recently modified source file, extracts language/symbols/git message |
-| `infer_vibe(context)` | Claude reasons over context → returns vibe JSON (energy, mood, tags, queries) |
-| `search_playlist(vibe)` | Last.fm validates tags → Spotify finds a playlist → returns URI |
-| `open_playlist(uri)` | Opens `spotify:` URI in desktop app (cross-platform, no Premium needed) |
-| `get_now_playing()` | Polls Spotify currently-playing endpoint (free tier, metadata only) |
-
-### Example agentic loop
-
-```
-"Play music that matches what I'm working on"
-
-→ get_coding_context()   → { language: python, filename: train.py, symbols: [ModelTrainer, fit], git_message: "fix: loss converging", hour: 23 }
-→ infer_vibe(context)    → { energy: 0.75, focus: "deep", label: "late-night ML grind", spotify_query: "punjabi trap coding playlist" }
-→ search_playlist(vibe)  → { playlist_uri: "spotify:playlist:...", playlist_name: "Punjabi Trap 2024" }
-→ open_playlist(uri)     → opens Spotify desktop app
+```text
+Play music for what I'm coding.
 ```
 
----
+Claude should call:
 
-## Environment Variables
+1. `get_coding_context()`
+2. Follow the returned `next_action`, which currently means `search_tracks(query=<suggested_query>, fallback_query="AP Dhillon")`
+3. `queue_tracks(tracks=<tracks from search_tracks>)`
 
-| Variable | Required | Description |
-|---|---|---|
-| `LASTFM_API_KEY` | Optional | Enables Last.fm tag validation. Without it, Claude's tags are used directly. |
-| `SPOTIFY_CLIENT_ID` | Required | Your Spotify app's client ID |
-| `SPOTIFY_CLIENT_SECRET` | Required for search | Client secret for playlist search (client credentials flow) |
-| `SPOTIFY_REDIRECT_URI` | Optional | Defaults to `http://localhost:8888/callback` |
-| `WATCH_DIR` | Optional | Directory to scan for active file. Defaults to home directory. |
+## Local Smoke Checks
 
----
+Check that the server imports and exposes tools:
+
+```bash
+python -c "import asyncio, server; print([t.name for t in asyncio.run(server.mcp.list_tools())])"
+```
+
+Check context detection for this repo:
+
+```bash
+python -c "from vibe.context import get_coding_context; print(get_coding_context('C:/Users/gerad/Projects/VibeDev'))"
+```
+
+The output should include `suggested_query` and `next_action`.
+
+Check track search:
+
+```bash
+python -c "import asyncio; from vibe.music import search_tracks; print(asyncio.run(search_tracks('AP Dhillon', 'lo-fi hip hop focus')))"
+```
+
+The track search needs network access because `yt-dlp` queries YouTube.
 
 ## Running Tests
 
@@ -92,35 +160,38 @@ pip install pytest pytest-asyncio
 pytest tests/ -v
 ```
 
----
-
-## How It Works
-
-**Editor-agnostic file detection** — watches filesystem modification timestamps instead of a VS Code extension. Works with any editor, zero plugin install.
-
-**Claude does vibe reasoning** — `infer_vibe()` passes context to Claude via MCP sampling and asks for structured JSON. No if/else genre mapping. The interesting part.
-
-**Last.fm bridges the recommendations gap** — Spotify deprecated audio features and recommendations APIs in 2024. Last.fm fills that: free, tag-based, community-curated. Claude picks tags, Last.fm validates them, Spotify finds the playlist.
-
-**No Premium required** — playback via `spotify:` URI launch means we never touch the Spotify playback API. The OS opens Spotify like clicking a link. Free users shuffle-play, Premium users get ordered playback.
-
----
+The unit tests cover older context and vibe parsing behavior. The active MCP flow is better checked with the smoke commands above.
 
 ## Project Structure
 
+```text
+VibeDev/
+|-- .claude/
+|   `-- settings.local.json # Local Claude permissions, currently allows WebSearch
+|-- DESIGN.md
+|-- README.md
+|-- requirements.txt
+|-- server.py              # FastMCP server and tool definitions
+|-- vibe/
+|   |-- context.py         # Active project detection, source scan, artist picker
+|   |-- music.py           # yt-dlp search and duration filtering
+|   |-- player.py          # Queue state, skip, auto-advance
+|   |-- webplayer.py       # Edge/Chrome app-window launcher
+|   |-- infer.py           # Older MCP sampling experiment, not exposed by server.py
+|   `-- __init__.py
+`-- tests/
+    |-- test_context.py
+    `-- test_vibe.py
 ```
-vibedev-mcp/
-├── DESIGN.md           ← architecture and decisions
-├── README.md
-├── .env.example
-├── requirements.txt
-├── server.py           ← MCP server, all 5 tool definitions
-├── vibe/
-│   ├── context.py      ← filesystem scan, symbol extraction, git message
-│   ├── infer.py        ← MCP sampling → Claude vibe reasoning
-│   ├── music.py        ← Last.fm tag validation + Spotify playlist search
-│   └── player.py       ← URI launch (cross-platform) + now playing
-└── tests/
-    ├── test_context.py
-    └── test_vibe.py
-```
+
+## Known Issues
+
+- `test_live.py` is stale and still references an older `play_track` API.
+- `infer.py` is not part of the active server flow.
+- Browser autoplay can still depend on the browser, YouTube Music session state, and whether the dedicated profile has been signed in.
+- `yt-dlp` search can fail if network access is blocked or YouTube changes behavior.
+- The current queue advances based on reported video duration, not actual browser playback state.
+
+## Notes
+
+`.env`, `.cache`, Python bytecode, pytest caches, and temporary files are ignored by `.gitignore`. Keep local auth/session files out of commits.
